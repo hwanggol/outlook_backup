@@ -5,9 +5,11 @@ Microsoft Outlook 메일을 자동으로 MSG 파일로 백업하는 VBA 매크�
 ## 📋 주요 기능
 
 - ✅ **자동 백업**: 새 메일 수신 및 발송 시 자동으로 MSG 파일로 저장
+- ✅ **중복 저장 방지**: EntryID 기반으로 동일 메일 중복 저장 방지
 - ✅ **폴더별 분류**: Inbox와 Sent 폴더를 자동으로 구분하여 저장
 - ✅ **연도/월 구조**: 날짜 기반 폴더 구조로 체계적인 관리
 - ✅ **수동 백업**: 기존 메일을 선택하여 일괄 백업 가능
+- ✅ **한 달치 백업**: 오늘 날짜 기준 이전 한 달치 메일 일괄 백업
 - ✅ **로그 시스템**: 성공/에러 로그 자동 기록 (월별 로테이션)
 - ✅ **파일명 최적화**: Windows 경로 제한(260자) 자동 준수
 
@@ -27,7 +29,8 @@ D:\Outlook_Backup\
 │           └── 20250113_151045_recipient_subject.msg
 └── logs\
     ├── 2025-01_success.log
-    └── 2025-01_error.log
+    ├── 2025-01_error.log
+    └── saved_entries.txt
 ```
 
 **파일명 형식**: `yyyymmdd_hhnnss_person_subject.msg`
@@ -98,6 +101,24 @@ Private Const BACKUP_BASE_PATH As String = "C:\MyBackup\"
 **참고**:
 - 50개 이상 선택 시 확인 메시지 표시
 - 메일이 속한 폴더를 자동 감지하여 Inbox/Sent로 분류
+- 이미 저장된 메일은 자동으로 건너뛰고 개수 표시
+
+### 한 달치 메일 백업
+
+1. **Alt + F8** (매크로 실행)
+2. **`BackupLastMonthMails`** 선택
+3. **실행** 클릭
+4. 백업 완료 후 결과 메시지 확인
+
+**기능**:
+- 오늘 날짜 기준 이전 한 달치 메일 자동 백업
+- Inbox와 Sent 폴더 모두 백업
+- 이미 저장된 메일은 자동으로 건너뜀
+- 백업 결과 통계 표시 (총 개수, 저장 개수, 건너뛴 개수)
+
+**참고**:
+- 백업 시간은 메일 개수에 따라 다를 수 있습니다
+- 중복 메일은 자동으로 건너뛰어 빠르게 처리됩니다
 
 ## 📊 로그 시스템
 
@@ -107,6 +128,7 @@ Private Const BACKUP_BASE_PATH As String = "C:\MyBackup\"
 **형식**:
 ```
 2025-01-13 14:30:22 | SUCCESS | D:\Outlook_Backup\Inbox\2025\01\20250113_143022_sender_subject.msg | 45,234 bytes | John Doe | Meeting Schedule
+2025-01-13 15:00:00 | MANUAL_BACKUP (한 달치) | 총 150개 중 120개 저장, 30개 건너뜀
 ```
 
 ### 에러 로그
@@ -116,6 +138,14 @@ Private Const BACKUP_BASE_PATH As String = "C:\MyBackup\"
 ```
 2025-01-13 14:35:10 | 파일 저장 실패: D:\Outlook_Backup\... | sender@example.com | Important Document
 ```
+
+### 중복 저장 인덱스
+**경로**: `D:\Outlook_Backup\logs\saved_entries.txt`
+
+**설명**: 저장된 메일의 EntryID를 기록하여 중복 저장을 방지합니다.
+- 한 줄에 하나의 EntryID 기록
+- 자동으로 관리되며 수동 편집 불필요
+- EntryID는 Outlook이 각 메일에 부여하는 고유 식별자입니다
 
 로그 파일은 월별로 자동 로테이션됩니다.
 
@@ -237,6 +267,12 @@ End If
 ### Q: 여러 계정을 사용하는데 모두 백업되나요?
 **A**: 기본 계정의 Inbox/Sent만 백업됩니다. 다른 계정은 추가 코드 수정 필요합니다.
 
+### Q: 같은 메일을 여러 번 저장하면 어떻게 되나요?
+**A**: 중복 저장 방지 기능으로 동일 메일은 한 번만 저장됩니다. EntryID를 기반으로 자동으로 중복을 감지합니다.
+
+### Q: 한 달치 백업은 언제 실행하나요?
+**A**: 수동으로 실행해야 합니다. Alt+F8 → `BackupLastMonthMails` 실행하면 오늘 기준 이전 한 달치 메일이 백업됩니다.
+
 ## 📄 라이선스
 
 이 프로젝트는 자유롭게 사용, 수정, 배포할 수 있습니다.
@@ -252,4 +288,4 @@ End If
 ---
 
 **마지막 업데이트**: 2025-01-13
-**버전**: 2.0 (Inbox/Sent 폴더 분리, 로그 시스템 추가)
+**버전**: 3.0 (중복 저장 방지, 한 달치 백업 기능 추가)

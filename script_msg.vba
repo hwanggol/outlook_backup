@@ -78,6 +78,12 @@ End Sub
 Sub SaveMailAsMSG(mail As Outlook.MailItem, folderType As String)
     On Error GoTo ErrorHandler
 
+    ' 중복 저장 체크
+    If IsMailAlreadySaved(mail) Then
+        ' 이미 저장된 메일이면 스킵
+        Exit Sub
+    End If
+
     Dim savePath As String
     Dim fileName As String
     Dim fullPath As String
@@ -181,6 +187,8 @@ Sub SaveMailAsMSG(mail As Outlook.MailItem, folderType As String)
         Else
             ' 저장 성공 로그 기록
             LogSuccess mail, fullPath, fileSize
+            ' EntryID를 인덱스에 추가 (중복 저장 방지)
+            AddEntryIDToIndex mail
         End If
     Else
         LogError mail, "파일 저장 실패: " & fullPath
@@ -281,6 +289,298 @@ Function CleanFileName(ByVal strFileName As String) As String
 End Function
 
 '===========================================
+' 저장된 메일 EntryID 인덱스 파일 경로
+'===========================================
+Function GetEntryIDIndexPath() As String
+    Dim indexFolder As String
+    indexFolder = BACKUP_BASE_PATH & "logs\"
+    CreateFolderPath indexFolder
+    GetEntryIDIndexPath = indexFolder & "saved_entries.txt"
+End Function
+
+'===========================================
+' 메일이 이미 저장되었는지 확인
+'===========================================
+Function IsMailAlreadySaved(mail As Outlook.MailItem) As Boolean
+    On Error Resume Next
+    
+    Dim entryID As String
+    entryID = mail.EntryID
+    
+    ' EntryID가 없으면 저장되지 않은 것으로 간주
+    If entryID = "" Then
+        IsMailAlreadySaved = False
+        Exit Function
+    End If
+    
+    Dim fso As Object
+    Dim indexFile As Object
+    Dim indexPath As String
+    Dim line As String
+    
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    indexPath = GetEntryIDIndexPath()
+    
+    ' 인덱스 파일이 없으면 저장되지 않은 것으로 간주
+    If Not fso.FileExists(indexPath) Then
+        IsMailAlreadySaved = False
+        Set fso = Nothing
+        Exit Function
+    End If
+    
+    ' 인덱스 파일에서 EntryID 검색
+    Set indexFile = fso.OpenTextFile(indexPath, 1, False)
+    
+    Do While Not indexFile.AtEndOfStream
+        line = Trim(indexFile.ReadLine)
+        If line = entryID Then
+            indexFile.Close
+            Set indexFile = Nothing
+            Set fso = Nothing
+            IsMailAlreadySaved = True
+            Exit Function
+        End If
+    Loop
+    
+    indexFile.Close
+    Set indexFile = Nothing
+    Set fso = Nothing
+    IsMailAlreadySaved = False
+End Function
+
+'===========================================
+' 저장된 메일 EntryID를 인덱스에 추가
+'===========================================
+Sub AddEntryIDToIndex(mail As Outlook.MailItem)
+    On Error Resume Next
+    
+    Dim entryID As String
+    entryID = mail.EntryID
+    
+    ' EntryID가 없으면 인덱스에 추가하지 않음
+    If entryID = "" Then
+        Exit Sub
+    End If
+    
+    Dim fso As Object
+    Dim indexFile As Object
+    Dim indexPath As String
+    
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    indexPath = GetEntryIDIndexPath()
+    
+    ' Append 모드로 열기 (파일 없으면 자동 생성)
+    Set indexFile = fso.OpenTextFile(indexPath, 8, True)
+    indexFile.WriteLine entryID
+    indexFile.Close
+    
+    Set indexFile = Nothing
+    Set fso = Nothing
+End Sub
+
+'===========================================
+' 수동 실행: 오늘 날짜 기준 이전 한 달치 메일 백업
+' 사용법: Alt+F8 → BackupLastMonthMails 실행
+'===========================================
+Public Sub BackupLastMonthMails()
+    On Error GoTo ErrorHandler
+    
+    Dim ns As Outlook.NameSpace
+    Dim inboxFolder As Outlook.MAPIFolder
+    Dim sentFolder As Outlook.MAPIFolder
+    Dim inboxItems As Outlook.Items
+    Dim sentItems As Outlook.Items
+    Dim Item As Object
+    Dim mail As Outlook.MailItem
+    Dim startDate As Date
+    Dim endDate As Date
+    Dim filterString As String
+    Dim savedCount As Long
+    Dim skippedCount As Long
+    Dim totalCount As Long
+    
+    ' 한 달 전 날짜 계산
+    endDate = Now
+    startDate = DateAdd("m", -1, endDate)
+    
+    Set ns = Application.GetNamespace("MAPI")
+    Set inboxFolder = ns.GetDefaultFolder(olFolderInbox)
+    Set sentFolder = ns.GetDefaultFolder(olFolderSentMail)
+    
+    savedCount = 0
+    skippedCount = 0
+    totalCount = 0
+    
+    ' Inbox 메일 백업
+    Set inboxItems = inboxFolder.Items
+    ' Outlook 날짜 필터 형식: "mm/dd/yyyy hh:nn AM/PM"
+    filterString = "[ReceivedTime] >= '" & Format(startDate, "mm/dd/yyyy hh:nn AM/PM") & "' AND [ReceivedTime] <= '" & Format(endDate, "mm/dd/yyyy hh:nn AM/PM") & "'"
+    
+    On Error Resume Next
+    Set inboxItems = inboxItems.Restrict(filterString)
+    If Err.Number <> 0 Then
+        ' 필터 실패 시 전체 아이템 사용 (날짜는 나중에 직접 비교)
+        Set inboxItems = inboxFolder.Items
+        Err.Clear
+    End If
+    On Error GoTo ErrorHandler
+    
+    If Not inboxItems Is Nothing Then
+        On Error Resume Next
+        inboxItems.Sort "[ReceivedTime]", True
+        On Error GoTo ErrorHandler
+        
+        For Each Item In inboxItems
+            If TypeOf Item Is Outlook.MailItem Then
+                Set mail = Item
+                
+                ' 날짜 범위 확인 (필터가 실패한 경우를 대비)
+                Dim mailDate As Date
+                If IsDate(mail.ReceivedTime) And mail.ReceivedTime > #1/1/1900# Then
+                    mailDate = mail.ReceivedTime
+                ElseIf IsDate(mail.CreationTime) And mail.CreationTime > #1/1/1900# Then
+                    mailDate = mail.CreationTime
+                Else
+                    mailDate = #1/1/1900#
+                End If
+                
+                ' 날짜 범위 내에 있는지 확인
+                If mailDate >= startDate And mailDate <= endDate Then
+                    totalCount = totalCount + 1
+                    
+                    ' 중복 체크
+                    If IsMailAlreadySaved(mail) Then
+                        skippedCount = skippedCount + 1
+                    Else
+                        SaveMailAsMSG mail, "Inbox"
+                        savedCount = savedCount + 1
+                    End If
+                End If
+                
+                Set mail = Nothing
+                DoEvents
+            End If
+        Next Item
+    End If
+    
+    ' Sent 메일 백업
+    Set sentItems = sentFolder.Items
+    ' Outlook 날짜 필터 형식: "mm/dd/yyyy hh:nn AM/PM"
+    filterString = "[SentOn] >= '" & Format(startDate, "mm/dd/yyyy hh:nn AM/PM") & "' AND [SentOn] <= '" & Format(endDate, "mm/dd/yyyy hh:nn AM/PM") & "'"
+    
+    On Error Resume Next
+    Set sentItems = sentItems.Restrict(filterString)
+    If Err.Number <> 0 Then
+        ' 필터 실패 시 전체 아이템 사용 (날짜는 나중에 직접 비교)
+        Set sentItems = sentFolder.Items
+        Err.Clear
+    End If
+    On Error GoTo ErrorHandler
+    
+    If Not sentItems Is Nothing Then
+        On Error Resume Next
+        sentItems.Sort "[SentOn]", True
+        On Error GoTo ErrorHandler
+        
+        For Each Item In sentItems
+            If TypeOf Item Is Outlook.MailItem Then
+                Set mail = Item
+                
+                ' 날짜 범위 확인 (필터가 실패한 경우를 대비)
+                Dim mailSentDate As Date
+                If IsDate(mail.SentOn) And mail.SentOn > #1/1/1900# Then
+                    mailSentDate = mail.SentOn
+                ElseIf IsDate(mail.CreationTime) And mail.CreationTime > #1/1/1900# Then
+                    mailSentDate = mail.CreationTime
+                Else
+                    mailSentDate = #1/1/1900#
+                End If
+                
+                ' 날짜 범위 내에 있는지 확인
+                If mailSentDate >= startDate And mailSentDate <= endDate Then
+                    totalCount = totalCount + 1
+                    
+                    ' 중복 체크
+                    If IsMailAlreadySaved(mail) Then
+                        skippedCount = skippedCount + 1
+                    Else
+                        SaveMailAsMSG mail, "Sent"
+                        savedCount = savedCount + 1
+                    End If
+                End If
+                
+                Set mail = Nothing
+                DoEvents
+            End If
+        Next Item
+    End If
+    
+    ' 결과 로그 기록 및 사용자에게 결과 표시
+    If totalCount > 0 Then
+        On Error Resume Next
+        Dim fso As Object
+        Dim logFile As Object
+        Dim logPath As String
+        Dim logEntry As String
+        
+        Set fso = CreateObject("Scripting.FileSystemObject")
+        logPath = GetLogFilePath("success")
+        
+        Set logFile = fso.OpenTextFile(logPath, 8, True)
+        logEntry = Format(Now, "yyyy-mm-dd hh:nn:ss") & " | " & _
+                   "MANUAL_BACKUP (한 달치)" & " | " & _
+                   "총 " & totalCount & "개 중 " & savedCount & "개 저장, " & skippedCount & "개 건너뜀"
+        
+        logFile.WriteLine logEntry
+        logFile.Close
+        
+        Set logFile = Nothing
+        Set fso = Nothing
+        
+        ' 사용자에게 결과 표시
+        Dim msgText As String
+        msgText = "한 달치 메일 백업이 완료되었습니다." & vbCrLf & vbCrLf
+        msgText = msgText & "총 " & totalCount & "개의 메일 중:" & vbCrLf
+        msgText = msgText & "- 저장: " & savedCount & "개" & vbCrLf
+        If skippedCount > 0 Then
+            msgText = msgText & "- 건너뜀 (이미 저장됨): " & skippedCount & "개" & vbCrLf
+        End If
+        msgText = msgText & vbCrLf & "경로: " & BACKUP_BASE_PATH
+        
+        MsgBox msgText, vbInformation, "한 달치 메일 백업"
+    Else
+        MsgBox "백업할 메일이 없습니다." & vbCrLf & _
+               "기간: " & Format(startDate, "yyyy-mm-dd") & " ~ " & Format(endDate, "yyyy-mm-dd"), _
+               vbInformation, "한 달치 메일 백업"
+    End If
+    
+    ' 메모리 정리
+    Set inboxItems = Nothing
+    Set sentItems = Nothing
+    Set inboxFolder = Nothing
+    Set sentFolder = Nothing
+    Set ns = Nothing
+    
+    Exit Sub
+ErrorHandler:
+    ' 에러 발생 시에도 계속 진행 (로그만 기록)
+    On Error Resume Next
+    Dim fsoErr As Object
+    Dim logFileErr As Object
+    Dim logPathErr As String
+    
+    Set fsoErr = CreateObject("Scripting.FileSystemObject")
+    logPathErr = GetLogFilePath("error")
+    
+    Set logFileErr = fsoErr.OpenTextFile(logPathErr, 8, True)
+    logFileErr.WriteLine Format(Now, "yyyy-mm-dd hh:nn:ss") & " | BackupLastMonthMails 에러: " & Err.Description
+    logFileErr.Close
+    
+    Set logFileErr = Nothing
+    Set fsoErr = Nothing
+End Sub
+
+'===========================================
 ' 수동 실행: 선택한 메일 저장
 '===========================================
 Public Sub SaveSelectedMailsAsMSG()
@@ -309,6 +609,9 @@ Public Sub SaveSelectedMailsAsMSG()
         End If
     End If
     
+    Dim skippedCount As Long
+    skippedCount = 0
+    
     For Each Item In selectedItems
         If TypeOf Item Is Outlook.MailItem Then
             Set mail = Item
@@ -326,14 +629,27 @@ Public Sub SaveSelectedMailsAsMSG()
                 folderType = "Inbox"
             End If
 
-            SaveMailAsMSG mail, folderType
-            savedCount = savedCount + 1
+            ' 중복 체크
+            If IsMailAlreadySaved(mail) Then
+                skippedCount = skippedCount + 1
+            Else
+                SaveMailAsMSG mail, folderType
+                savedCount = savedCount + 1
+            End If
+            
+            Set mail = Nothing
             DoEvents
         End If
     Next Item
 
-    MsgBox savedCount & "개의 메일이 저장되었습니다." & vbCrLf & _
-           "경로: " & BACKUP_BASE_PATH, vbInformation
+    Dim msgText As String
+    msgText = savedCount & "개의 메일이 저장되었습니다."
+    If skippedCount > 0 Then
+        msgText = msgText & vbCrLf & skippedCount & "개의 메일은 이미 저장되어 있어 건너뛰었습니다."
+    End If
+    msgText = msgText & vbCrLf & "경로: " & BACKUP_BASE_PATH
+    
+    MsgBox msgText, vbInformation
 
     ' 메모리 정리
     Set mail = Nothing
