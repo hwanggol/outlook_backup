@@ -622,6 +622,244 @@ Public Sub BackupLast3YearsMails()
 End Sub
 
 '===========================================
+' 내부: PST 파일 기간별 백업 공통 로직 (대용량 PST 대응)
+'===========================================
+Private Sub BackupPSTByDateRange(ByVal startDate As Date, ByVal endDate As Date, ByVal periodLabel As String, ByVal errorSubName As String)
+    On Error GoTo ErrorHandler
+    
+    Dim ns As Outlook.NameSpace
+    Dim stores As Outlook.Stores
+    Dim oStore As Outlook.Store
+    Dim inboxFolder As Outlook.MAPIFolder
+    Dim sentFolder As Outlook.MAPIFolder
+    Dim folderItems As Outlook.Items
+    Dim filterString As String
+    Dim Item As Object
+    Dim mail As Outlook.MailItem
+    Dim savedCount As Long
+    Dim skippedCount As Long
+    Dim totalCount As Long
+    Dim pstCount As Long
+    Dim storePath As String
+    Dim mailDate As Date
+    Dim mailSentDate As Date
+    
+    Set ns = Application.GetNamespace("MAPI")
+    Set stores = ns.Stores
+    
+    savedCount = 0
+    skippedCount = 0
+    totalCount = 0
+    pstCount = 0
+    
+    For Each oStore In stores
+        On Error Resume Next
+        storePath = oStore.FilePath
+        If Err.Number <> 0 Then Err.Clear
+        On Error GoTo ErrorHandler
+        
+        If Len(storePath) = 0 Or InStr(1, UCase(storePath), ".PST") = 0 Then GoTo NextStore
+        
+        pstCount = pstCount + 1
+        
+        ' PST 받은편지함 (날짜 필터 적용)
+        On Error Resume Next
+        Set inboxFolder = oStore.GetDefaultFolder(olFolderInbox)
+        If Err.Number <> 0 Then Set inboxFolder = Nothing: Err.Clear
+        On Error GoTo ErrorHandler
+        
+        If Not inboxFolder Is Nothing Then
+            filterString = "[ReceivedTime] >= '" & Format(startDate, "mm/dd/yyyy hh:nn AM/PM") & "' AND [ReceivedTime] <= '" & Format(endDate, "mm/dd/yyyy hh:nn AM/PM") & "'"
+            On Error Resume Next
+            Set folderItems = inboxFolder.Items.Restrict(filterString)
+            If Err.Number <> 0 Or folderItems Is Nothing Then
+                Set folderItems = inboxFolder.Items
+                Err.Clear
+            End If
+            On Error GoTo ErrorHandler
+            On Error Resume Next
+            folderItems.Sort "[ReceivedTime]", True
+            On Error GoTo ErrorHandler
+            
+            For Each Item In folderItems
+                If TypeOf Item Is Outlook.MailItem Then
+                    Set mail = Item
+                    If IsDate(mail.ReceivedTime) And mail.ReceivedTime > #1/1/1900# Then
+                        mailDate = mail.ReceivedTime
+                    ElseIf IsDate(mail.CreationTime) And mail.CreationTime > #1/1/1900# Then
+                        mailDate = mail.CreationTime
+                    Else
+                        mailDate = #1/1/1900#
+                    End If
+                    If mailDate >= startDate And mailDate <= endDate Then
+                        totalCount = totalCount + 1
+                        If IsMailAlreadySaved(mail) Then
+                            skippedCount = skippedCount + 1
+                        Else
+                            SaveMailAsMSG mail, "Inbox"
+                            savedCount = savedCount + 1
+                        End If
+                    End If
+                    Set mail = Nothing
+                    DoEvents
+                End If
+            Next Item
+            Set folderItems = Nothing
+            Set inboxFolder = Nothing
+        End If
+        
+        ' PST 보낸편지함 (날짜 필터 적용)
+        On Error Resume Next
+        Set sentFolder = oStore.GetDefaultFolder(olFolderSentMail)
+        If Err.Number <> 0 Then Set sentFolder = Nothing: Err.Clear
+        On Error GoTo ErrorHandler
+        
+        If Not sentFolder Is Nothing Then
+            filterString = "[SentOn] >= '" & Format(startDate, "mm/dd/yyyy hh:nn AM/PM") & "' AND [SentOn] <= '" & Format(endDate, "mm/dd/yyyy hh:nn AM/PM") & "'"
+            On Error Resume Next
+            Set folderItems = sentFolder.Items.Restrict(filterString)
+            If Err.Number <> 0 Or folderItems Is Nothing Then
+                Set folderItems = sentFolder.Items
+                Err.Clear
+            End If
+            On Error GoTo ErrorHandler
+            On Error Resume Next
+            folderItems.Sort "[SentOn]", True
+            On Error GoTo ErrorHandler
+            
+            For Each Item In folderItems
+                If TypeOf Item Is Outlook.MailItem Then
+                    Set mail = Item
+                    If IsDate(mail.SentOn) And mail.SentOn > #1/1/1900# Then
+                        mailSentDate = mail.SentOn
+                    ElseIf IsDate(mail.CreationTime) And mail.CreationTime > #1/1/1900# Then
+                        mailSentDate = mail.CreationTime
+                    Else
+                        mailSentDate = #1/1/1900#
+                    End If
+                    If mailSentDate >= startDate And mailSentDate <= endDate Then
+                        totalCount = totalCount + 1
+                        If IsMailAlreadySaved(mail) Then
+                            skippedCount = skippedCount + 1
+                        Else
+                            SaveMailAsMSG mail, "Sent"
+                            savedCount = savedCount + 1
+                        End If
+                    End If
+                    Set mail = Nothing
+                    DoEvents
+                End If
+            Next Item
+            Set folderItems = Nothing
+            Set sentFolder = Nothing
+        End If
+        
+NextStore:
+    Next oStore
+    
+    ' 결과 로그 및 메시지
+    If totalCount > 0 Then
+        On Error Resume Next
+        Dim fso As Object
+        Dim logFile As Object
+        Dim logPath As String
+        Dim logEntry As String
+        Set fso = CreateObject("Scripting.FileSystemObject")
+        logPath = GetLogFilePath("success")
+        Set logFile = fso.OpenTextFile(logPath, 8, True)
+        logEntry = Format(Now, "yyyy-mm-dd hh:nn:ss") & " | " & _
+                   "MANUAL_BACKUP (PST " & periodLabel & ")" & " | " & _
+                   "PST " & pstCount & "개, 총 " & totalCount & "개 중 " & savedCount & "개 저장, " & skippedCount & "개 건너뜀"
+        logFile.WriteLine logEntry
+        logFile.Close
+        Set logFile = Nothing
+        Set fso = Nothing
+    End If
+    
+    Dim msgText As String
+    If pstCount = 0 Then
+        msgText = "연결된 PST 파일이 없습니다." & vbCrLf & "Outlook에서 PST를 추가한 뒤 다시 실행하세요."
+    ElseIf totalCount = 0 Then
+        msgText = "해당 기간(" & periodLabel & ")에 백업할 메일이 없습니다." & vbCrLf & "기간: " & Format(startDate, "yyyy-mm-dd") & " ~ " & Format(endDate, "yyyy-mm-dd") & vbCrLf & "PST 파일 수: " & pstCount & "개"
+    Else
+        msgText = "PST " & periodLabel & " 메일 백업이 완료되었습니다." & vbCrLf & vbCrLf
+        msgText = msgText & "PST 파일 수: " & pstCount & "개" & vbCrLf
+        msgText = msgText & "총 " & totalCount & "개의 메일 중:" & vbCrLf
+        msgText = msgText & "- 저장: " & savedCount & "개" & vbCrLf
+        If skippedCount > 0 Then msgText = msgText & "- 건너뜀 (이미 저장됨): " & skippedCount & "개" & vbCrLf
+        msgText = msgText & vbCrLf & "경로: " & BACKUP_BASE_PATH
+    End If
+    MsgBox msgText, vbInformation, "PST " & periodLabel & " 메일 백업"
+    
+    Set stores = Nothing
+    Set ns = Nothing
+    Exit Sub
+ErrorHandler:
+    On Error Resume Next
+    Dim fsoErr As Object
+    Dim logFileErr As Object
+    Dim logPathErr As String
+    Set fsoErr = CreateObject("Scripting.FileSystemObject")
+    logPathErr = GetLogFilePath("error")
+    Set logFileErr = fsoErr.OpenTextFile(logPathErr, 8, True)
+    logFileErr.WriteLine Format(Now, "yyyy-mm-dd hh:nn:ss") & " | " & errorSubName & " 에러: " & Err.Description
+    logFileErr.Close
+    Set logFileErr = Nothing
+    Set fsoErr = Nothing
+    MsgBox "오류 발생: " & Err.Description, vbCritical, "PST 메일 백업"
+End Sub
+
+'===========================================
+' 수동 실행: PST 오늘 기준 이전 1년치 백업
+'===========================================
+Public Sub BackupPSTLastYearMails()
+    Dim endDate As Date, startDate As Date
+    endDate = Now
+    startDate = DateAdd("yyyy", -1, endDate)
+    BackupPSTByDateRange startDate, endDate, "1년치", "BackupPSTLastYearMails"
+End Sub
+
+'===========================================
+' 수동 실행: PST 오늘 기준 이전 2년치 백업
+'===========================================
+Public Sub BackupPSTLast2YearsMails()
+    Dim endDate As Date, startDate As Date
+    endDate = Now
+    startDate = DateAdd("yyyy", -2, endDate)
+    BackupPSTByDateRange startDate, endDate, "2년치", "BackupPSTLast2YearsMails"
+End Sub
+
+'===========================================
+' 수동 실행: PST 오늘 기준 이전 3년치 백업
+'===========================================
+Public Sub BackupPSTLast3YearsMails()
+    Dim endDate As Date, startDate As Date
+    endDate = Now
+    startDate = DateAdd("yyyy", -3, endDate)
+    BackupPSTByDateRange startDate, endDate, "3년치", "BackupPSTLast3YearsMails"
+End Sub
+
+'===========================================
+' 수동 실행: PST 오늘 기준 이전 4년치 백업
+'===========================================
+Public Sub BackupPSTLast4YearsMails()
+    Dim endDate As Date, startDate As Date
+    endDate = Now
+    startDate = DateAdd("yyyy", -4, endDate)
+    BackupPSTByDateRange startDate, endDate, "4년치", "BackupPSTLast4YearsMails"
+End Sub
+
+'===========================================
+' 수동 실행: PST 오늘 기준 이전 5년치 백업
+'===========================================
+Public Sub BackupPSTLast5YearsMails()
+    Dim endDate As Date, startDate As Date
+    endDate = Now
+    startDate = DateAdd("yyyy", -5, endDate)
+    BackupPSTByDateRange startDate, endDate, "5년치", "BackupPSTLast5YearsMails"
+End Sub
+
+'===========================================
 ' 수동 실행: 선택한 메일 저장
 '===========================================
 Public Sub SaveSelectedMailsAsMSG()
