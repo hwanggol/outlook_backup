@@ -669,14 +669,8 @@ Private Sub BackupPSTByDateRange(ByVal startDate As Date, ByVal endDate As Date,
         On Error GoTo ErrorHandler
         
         If Not inboxFolder Is Nothing Then
-            filterString = "[ReceivedTime] >= '" & Format(startDate, "mm/dd/yyyy hh:nn AM/PM") & "' AND [ReceivedTime] <= '" & Format(endDate, "mm/dd/yyyy hh:nn AM/PM") & "'"
-            On Error Resume Next
-            Set folderItems = inboxFolder.Items.Restrict(filterString)
-            If Err.Number <> 0 Or folderItems Is Nothing Then
-                Set folderItems = inboxFolder.Items
-                Err.Clear
-            End If
-            On Error GoTo ErrorHandler
+            ' PST는 Restrict 날짜 필터가 동작하지 않을 수 있으므로 전체 항목 순회 후 VBA에서 날짜 비교
+            Set folderItems = inboxFolder.Items
             On Error Resume Next
             folderItems.Sort "[ReceivedTime]", True
             On Error GoTo ErrorHandler
@@ -715,14 +709,8 @@ Private Sub BackupPSTByDateRange(ByVal startDate As Date, ByVal endDate As Date,
         On Error GoTo ErrorHandler
         
         If Not sentFolder Is Nothing Then
-            filterString = "[SentOn] >= '" & Format(startDate, "mm/dd/yyyy hh:nn AM/PM") & "' AND [SentOn] <= '" & Format(endDate, "mm/dd/yyyy hh:nn AM/PM") & "'"
-            On Error Resume Next
-            Set folderItems = sentFolder.Items.Restrict(filterString)
-            If Err.Number <> 0 Or folderItems Is Nothing Then
-                Set folderItems = sentFolder.Items
-                Err.Clear
-            End If
-            On Error GoTo ErrorHandler
+            ' PST는 Restrict 날짜 필터가 동작하지 않을 수 있으므로 전체 항목 순회 후 VBA에서 날짜 비교
+            Set folderItems = sentFolder.Items
             On Error Resume Next
             folderItems.Sort "[SentOn]", True
             On Error GoTo ErrorHandler
