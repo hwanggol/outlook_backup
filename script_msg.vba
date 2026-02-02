@@ -379,10 +379,9 @@ Sub AddEntryIDToIndex(mail As Outlook.MailItem)
 End Sub
 
 '===========================================
-' 수동 실행: 오늘 날짜 기준 이전 한 달치 메일 백업
-' 사용법: Alt+F8 → BackupLastMonthMails 실행
+' 내부: 기간별 메일 백업 공통 로직
 '===========================================
-Public Sub BackupLastMonthMails()
+Private Sub BackupMailsByDateRange(ByVal startDate As Date, ByVal endDate As Date, ByVal periodLabel As String, ByVal errorSubName As String)
     On Error GoTo ErrorHandler
     
     Dim ns As Outlook.NameSpace
@@ -392,16 +391,10 @@ Public Sub BackupLastMonthMails()
     Dim sentItems As Outlook.Items
     Dim Item As Object
     Dim mail As Outlook.MailItem
-    Dim startDate As Date
-    Dim endDate As Date
     Dim filterString As String
     Dim savedCount As Long
     Dim skippedCount As Long
     Dim totalCount As Long
-    
-    ' 한 달 전 날짜 계산
-    endDate = Now
-    startDate = DateAdd("m", -1, endDate)
     
     Set ns = Application.GetNamespace("MAPI")
     Set inboxFolder = ns.GetDefaultFolder(olFolderInbox)
@@ -528,7 +521,7 @@ Public Sub BackupLastMonthMails()
         
         Set logFile = fso.OpenTextFile(logPath, 8, True)
         logEntry = Format(Now, "yyyy-mm-dd hh:nn:ss") & " | " & _
-                   "MANUAL_BACKUP (한 달치)" & " | " & _
+                   "MANUAL_BACKUP (" & periodLabel & ")" & " | " & _
                    "총 " & totalCount & "개 중 " & savedCount & "개 저장, " & skippedCount & "개 건너뜀"
         
         logFile.WriteLine logEntry
@@ -539,7 +532,7 @@ Public Sub BackupLastMonthMails()
         
         ' 사용자에게 결과 표시
         Dim msgText As String
-        msgText = "한 달치 메일 백업이 완료되었습니다." & vbCrLf & vbCrLf
+        msgText = periodLabel & " 메일 백업이 완료되었습니다." & vbCrLf & vbCrLf
         msgText = msgText & "총 " & totalCount & "개의 메일 중:" & vbCrLf
         msgText = msgText & "- 저장: " & savedCount & "개" & vbCrLf
         If skippedCount > 0 Then
@@ -547,11 +540,11 @@ Public Sub BackupLastMonthMails()
         End If
         msgText = msgText & vbCrLf & "경로: " & BACKUP_BASE_PATH
         
-        MsgBox msgText, vbInformation, "한 달치 메일 백업"
+        MsgBox msgText, vbInformation, periodLabel & " 메일 백업"
     Else
         MsgBox "백업할 메일이 없습니다." & vbCrLf & _
                "기간: " & Format(startDate, "yyyy-mm-dd") & " ~ " & Format(endDate, "yyyy-mm-dd"), _
-               vbInformation, "한 달치 메일 백업"
+               vbInformation, periodLabel & " 메일 백업"
     End If
     
     ' 메모리 정리
@@ -573,11 +566,59 @@ ErrorHandler:
     logPathErr = GetLogFilePath("error")
     
     Set logFileErr = fsoErr.OpenTextFile(logPathErr, 8, True)
-    logFileErr.WriteLine Format(Now, "yyyy-mm-dd hh:nn:ss") & " | BackupLastMonthMails 에러: " & Err.Description
+    logFileErr.WriteLine Format(Now, "yyyy-mm-dd hh:nn:ss") & " | " & errorSubName & " 에러: " & Err.Description
     logFileErr.Close
     
     Set logFileErr = Nothing
     Set fsoErr = Nothing
+End Sub
+
+'===========================================
+' 수동 실행: 오늘 날짜 기준 이전 한 달치 메일 백업
+' 사용법: Alt+F8 → BackupLastMonthMails 실행
+'===========================================
+Public Sub BackupLastMonthMails()
+    Dim endDate As Date
+    Dim startDate As Date
+    endDate = Now
+    startDate = DateAdd("m", -1, endDate)
+    BackupMailsByDateRange startDate, endDate, "한 달치", "BackupLastMonthMails"
+End Sub
+
+'===========================================
+' 수동 실행: 오늘 날짜 기준 이전 1년치 메일 백업
+' 사용법: Alt+F8 → BackupLastYearMails 실행
+'===========================================
+Public Sub BackupLastYearMails()
+    Dim endDate As Date
+    Dim startDate As Date
+    endDate = Now
+    startDate = DateAdd("yyyy", -1, endDate)
+    BackupMailsByDateRange startDate, endDate, "1년치", "BackupLastYearMails"
+End Sub
+
+'===========================================
+' 수동 실행: 오늘 날짜 기준 이전 2년치 메일 백업
+' 사용법: Alt+F8 → BackupLast2YearsMails 실행
+'===========================================
+Public Sub BackupLast2YearsMails()
+    Dim endDate As Date
+    Dim startDate As Date
+    endDate = Now
+    startDate = DateAdd("yyyy", -2, endDate)
+    BackupMailsByDateRange startDate, endDate, "2년치", "BackupLast2YearsMails"
+End Sub
+
+'===========================================
+' 수동 실행: 오늘 날짜 기준 이전 3년치 메일 백업
+' 사용법: Alt+F8 → BackupLast3YearsMails 실행
+'===========================================
+Public Sub BackupLast3YearsMails()
+    Dim endDate As Date
+    Dim startDate As Date
+    endDate = Now
+    startDate = DateAdd("yyyy", -3, endDate)
+    BackupMailsByDateRange startDate, endDate, "3년치", "BackupLast3YearsMails"
 End Sub
 
 '===========================================
